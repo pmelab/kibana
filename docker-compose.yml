@@ -1,0 +1,65 @@
+version: '2'
+services:
+
+  database:
+    image: mariadb
+    environment:
+      MYSQL_DATABASE: drupal
+      MYSQL_USER: drupal
+      MYSQL_PASSWORD: drupal
+      MYSQL_ROOT_PASSWORD: root
+
+  drupal:
+    build: docker/drupal
+    links:
+    - database:database
+    - elasticsearch:elasticsearch
+    volumes:
+    - .:/var/www/html/sites/all/modules/kibana
+    ports:
+    - 80:80
+    environment:
+      MYSQL_HOST: database
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: drupal
+      MYSQL_USER: drupal
+      MYSQL_PASSWORD: drupal
+      MYSQL_ROOT_PASSWORD: root
+
+  elasticsearch:
+    build: docker/elasticsearch
+    environment:
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+    ports:
+    - 9200:9200
+
+  esproxy:
+    build: docker/esproxy
+    environment:
+      DEBUG: "TRUE"
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      SESSION_PREFIX: 'SESS'
+      SESSION_DOMAIN: '.dork.io'
+      MYSQL_HOST: database
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: drupal
+      MYSQL_USER: drupal
+      MYSQL_PASSWORD: drupal
+      MYSQL_ROOT_PASSWORD: root
+    links:
+    - elasticsearch:elasticsearch
+    - database:database
+    volumes:
+    - ./docker/esproxy:/app
+    ports:
+    - 8080:80
+
+  kibana:
+    build: docker/kibana
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+    links:
+    - esproxy:esproxy
+    - elasticsearch:elasticsearch
+    ports:
+    - 5601:5601

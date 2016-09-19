@@ -1,0 +1,13 @@
+{
+  "order" : 0,
+  "template" : "snapshot-*",
+  "mappings" : {
+    "_default_" : {
+      "properties": {
+        "value": {
+          "type": "float"
+        }
+      }
+    }
+  }
+}

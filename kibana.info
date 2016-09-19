@@ -1,0 +1,7 @@
+name = Kibana
+description = Run various statistics with Kibana.
+package = Core
+version = VERSION
+core = 7.x
+files[] = kibana.module
+files[] = includes/kibana.service.inc

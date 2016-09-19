@@ -1,0 +1,255 @@
+<?php
+require_once "vendor/autoload.php";
+
+use Elasticsearch\ClientBuilder;
+
+function kibana_kibana_index_templates() {
+  $path = drupal_get_path('module', 'kibana');
+  return array(
+    'global' => json_decode(file_get_contents($path . '/templates/global.json'), TRUE),
+    'snapshot' => json_decode(file_get_contents($path . '/templates/snapshot.json'), TRUE),
+  );
+}
+
+function kibana_get_index_templates() {
+  $hook = 'kibana_index_templates';
+  $templates = array();
+  foreach (module_implements($hook) as $module) {
+    foreach (module_invoke($module, $hook) as $id => $template) {
+      $templates[$module . '.' . $id] = $template;
+    }
+  }
+  return $templates;
+}
+
+function kibana_get_pipelines() {
+  $hook = 'kibana_pipelines';
+  $pipelines = array();
+  foreach (module_implements($hook) as $module) {
+    foreach (module_invoke($module, $hook) as $id => $pipeline) {
+      $pipelines[$module . '.' . $id] = $pipeline;
+    }
+  }
+  return $pipelines;
+}
+
+function kibana_create_kibana_index() {
+  $client = kibana_elasticsearch_client();
+  try {
+    if (!$client->indices()->exists(array('index' => kibana_index()))) {
+      $client->indices()->create(array('index' => kibana_index()));
+    }
+  } catch (\Elasticsearch\Common\Exceptions\NoNodesAvailableException $exc) {
+    drupal_set_message(t('Could not connect to elasticsearch cluster at %url.', array(
+      '%url' => kibana_es_url(),
+    )), 'error');
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function kibana_theme($existing, $type, $theme, $path) {
+  return array(
+    'kibana_table_form' => array(
+      'render element' => 'form',
+    ),
+  );
+}
+
+function kibana_ui_url() {
+  return rtrim(variable_get('kibana_ui_url', 'http://localhost:5601'), '/');
+}
+
+function kibana_es_url() {
+  return rtrim(variable_get('kibana_es_url', 'http://localhost:9200'), '/');
+}
+
+function kibana_index() {
+  return variable_get('kibana_index', '.kibana');
+}
+
+/**
+ * Implements hook_rules_file_info().
+ */
+function kibana_rules_file_info() {
+  return array('includes/kibana.rules');
+}
+
+/**
+ * Implements hook_permission().
+ */
+function kibana_permission() {
+  $permissions = array();
+  $permissions['access kibana'] = array(
+    'title' => 'View kibana iframes.',
+    'descriptions' => 'User is allowed to view kibana iframes.',
+  );
+  $permissions['administer kibana'] = array(
+    'title' => 'Administer kibana.',
+    'descriptions' => 'User bypasses all kibana access checks.',
+  );
+  return $permissions;
+}
+
+/**
+ * Implements hook_menu().
+ */
+function kibana_menu() {
+  $items = array();
+
+  $items['admin/config/search/kibana/settings'] = array(
+    'title' => 'Settings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('kibana_settings_form'),
+    'access arguments' => array('administer kibana'),
+    'file' => 'includes/kibana.admin.inc',
+    'type' => MENU_LOCAL_TASK,
+  );
+
+  $items['admin/config/search/kibana/indices'] = array(
+    'title' => 'Indices',
+    'description' => 'Manage Kibana indices.',
+    'page callback' => 'kibana_indices_overview',
+    'access arguments' => array('administer kibana'),
+    'file' => 'includes/kibana.admin.inc',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+  );
+
+  $items['admin/config/search/kibana/indices/%/delete'] = array(
+    'title' => 'Delete index !index',
+    'title arguments' => array('!index' => 5 ),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('kibana_index_delete_form', 5),
+    'access arguments' => array('administer kibana'),
+    'file' => 'includes/kibana.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/config/search/kibana/indices/%/edit'] = array(
+    'title' => 'Edit index !index',
+    'title arguments' => array('!index' => 5 ),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('kibana_index_edit_form', 5),
+    'access arguments' => array('administer kibana'),
+    'file' => 'includes/kibana.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/config/search/kibana/indices/%/reindex'] = array(
+    'title' => 'Edit index !index',
+    'title arguments' => array('!index' => 5 ),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('kibana_index_reindex_form', 5),
+    'access arguments' => array('administer kibana'),
+    'file' => 'includes/kibana.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/config/search/kibana'] = $items['admin/config/search/kibana/indices'];
+  $items['admin/config/search/kibana']['type'] = MENU_NORMAL_ITEM;
+  $items['admin/config/search/kibana']['title'] = t('Kibana');
+  $items['admin/config/search/kibana']['Description'] = t('Manage Kibana settings and indices.');
+
+  return $items;
+}
+
+/**
+ * @return \Elasticsearch\Client
+ *   An elasticsearch client instance.
+ */
+function kibana_elasticsearch_client() {
+  return ClientBuilder::create()
+      ->setHosts([kibana_es_url()])
+      ->build();
+}
+
+/**
+ * Write an event object to a certain index.
+ *
+ * @param SearchApiIndex $index
+ *   The index name to log the event to.
+ */
+function kibana_write_object($index, $body) {
+  kibana_elasticsearch_client()->create(array(
+    'index' => $index,
+    'type' => $index,
+    'body' => $body + ['@timestamp' => time()],
+  ));
+}
+
+function kibana_admin() {
+  if (!function_exists('user_access')) {
+    require_once dirname(drupal_get_filename('module', 'user')) .'/user.module';
+  }
+  return user_access('administer kibana');
+}
+
+function kibana_user() {
+  if (!function_exists('user_access')) {
+    require_once dirname(drupal_get_filename('module', 'user')) .'/user.module';
+  }
+  return user_access('access kibana') || user_access('administer kibana');
+}
+
+/**
+ * Implements hook_rules_action_info().
+ */
+function kibana_rules_action_info() {
+  $actions = array();
+
+  $actions['kibana_rules_scan_action'] = array(
+    'label' => t('List views by tag'),
+    'group' => t('Kibana'),
+    'parameter' => array(
+      'tag' => array(
+        'type' => 'text',
+        'label' => t('Tag'),
+      ),
+    ),
+    'provides' => array(
+      'views' => array(
+        'type' => 'list<text>',
+        'label' => t('Views'),
+      ),
+    ),
+  );
+
+  $actions['kibana_rules_collect_action'] = array(
+    'label' => t('Collect statistic snapshots'),
+    'group' => t('Kibana'),
+    'parameter' => array(
+      'views' => array(
+        'type' => 'text',
+        'label' => t('Views'),
+      ),
+    ),
+  );
+
+  $actions['kibana_rules_log_action'] = array(
+    'label' => t('Log data object'),
+    'group' => t('Kibana'),
+    'parameter' => array(
+      'message' => array(
+        'type' => 'text',
+        'label' => t('Data'),
+        'optional' => TRUE,
+        'description' => t('Enter key value pairs that will be processed by <a href="http://php.net/manual/en/function.parse-ini-string.php">parse_ini_string()</a>.'),
+        'sanitize' => TRUE,
+      ),
+      'actor' => array(
+        'type' => 'user',
+        'label' => t('Actor'),
+        'optional' => TRUE,
+        'description' => t('The user originating this event.'),
+      ),
+      'owners' => array(
+        'type' => 'list<user>',
+        'label' => t('Owners'),
+        'optional' => TRUE,
+        'description' => t('Users that are allowed to access this events data.'),
+      ),
+    ),
+  );
+  return $actions;
+}

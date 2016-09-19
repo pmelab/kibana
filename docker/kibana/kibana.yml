@@ -1,0 +1,4 @@
+elasticsearch.url: 'http://elasticsearch:9200'
+kibana.index: ".kibana"
+logging.verbose: true
+elasticsearch.requestHeadersWhitelist: ['Authorization', 'Cookie']
